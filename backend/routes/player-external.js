@@ -105,27 +105,31 @@ router.get('/status', authMiddleware, async (req, res) => {
         playlist_name: transmission.playlist_nome
       };
     } else {
-      // Verificar stream OBS (através do status)
+      // Verificar stream OBS via API Wowza
       try {
-        const obsResponse = await fetch('/api/streaming/obs-status', {
-          headers: { Authorization: req.headers.authorization }
-        });
+        const WowzaStreamingService = require('../config/WowzaStreamingService');
+        const incomingStreamsResult = await WowzaStreamingService.checkUserIncomingStreams(userId);
         
-        if (obsResponse.ok) {
-          const obsData = await obsResponse.json();
-          if (obsData.success && obsData.obs_stream?.is_live) {
-            streamStatus = {
-              user_login: userLogin,
-              has_active_transmission: true,
-              transmission_type: 'obs',
-              stream_url: `http://stmv1.udicast.com:1935/samhost/${userLogin}_live/playlist.m3u8`,
-              title: `Transmissão OBS - ${userLogin}`,
-              playlist_name: null
-            };
-          }
+        if (incomingStreamsResult.hasActiveStreams) {
+          const activeStream = incomingStreamsResult.activeStreams[0];
+          streamStatus = {
+            user_login: userLogin,
+            has_active_transmission: true,
+            transmission_type: 'obs',
+            stream_url: `http://stmv1.udicast.com:1935/samhost/${userLogin}_live/playlist.m3u8`,
+            title: `Transmissão OBS - ${userLogin}`,
+            playlist_name: null,
+            stream_info: {
+              name: activeStream.name,
+              viewers: activeStream.connectionsCurrent || 0,
+              bitrate: Math.floor((activeStream.messagesInBytesRate || 0) / 1000),
+              uptime: WowzaStreamingService.formatUptime(activeStream.timeRunning || 0),
+              sourceIp: activeStream.sourceIp || 'N/A'
+            }
+          };
         }
       } catch (obsError) {
-        console.warn('Erro ao verificar stream OBS:', obsError.message);
+        console.warn('Erro ao verificar incoming streams:', obsError.message);
       }
     }
 

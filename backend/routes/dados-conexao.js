@@ -71,6 +71,27 @@ router.get('/obs-config', authMiddleware, async (req, res) => {
       console.warn('Aviso: Erro ao verificar/criar diretório do usuário:', dirError.message);
     }
 
+    // Verificar se há transmissão OBS ativa via API Wowza
+    let obsStreamActive = false;
+    let obsStreamInfo = null;
+    try {
+      const WowzaStreamingService = require('../config/WowzaStreamingService');
+      const incomingStreamsResult = await WowzaStreamingService.checkUserIncomingStreams(userId);
+      
+      if (incomingStreamsResult.hasActiveStreams) {
+        obsStreamActive = true;
+        const activeStream = incomingStreamsResult.activeStreams[0];
+        obsStreamInfo = {
+          streamName: activeStream.name,
+          viewers: activeStream.connectionsCurrent || 0,
+          bitrate: Math.floor((activeStream.messagesInBytesRate || 0) / 1000),
+          uptime: WowzaStreamingService.formatUptime(activeStream.timeRunning || 0),
+          sourceIp: activeStream.sourceIp || 'N/A'
+        };
+      }
+    } catch (wowzaError) {
+      console.warn('Erro ao verificar Wowza API:', wowzaError.message);
+    }
     // Verificar limites e gerar avisos
     const warnings = [];
     if (requestedBitrate && requestedBitrate > maxBitrate) {
@@ -81,6 +102,9 @@ router.get('/obs-config', authMiddleware, async (req, res) => {
     }
     if (serverInfo && serverInfo.load_cpu > 80) {
       warnings.push('Servidor com alta carga de CPU');
+    }
+    if (!obsStreamActive && !incomingStreamsResult?.success) {
+      warnings.push('Wowza API indisponível - verificação de stream limitada');
     }
     
     const usedSpace = userConfig.espaco_usado || 0;
@@ -130,6 +154,11 @@ router.get('/obs-config', authMiddleware, async (req, res) => {
           available: totalSpace - usedSpace,
           percentage: storagePercentage
         }
+      },
+      obs_stream_status: {
+        is_active: obsStreamActive,
+        stream_info: obsStreamInfo,
+        wowza_connection: incomingStreamsResult?.success || false
       },
       warnings: warnings,
       server_info: serverInfo,

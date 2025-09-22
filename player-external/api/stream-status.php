@@ -80,13 +80,52 @@ try {
         $response['title'] = $transmission['titulo'];
         $response['playlist_name'] = $transmission['playlist_nome'];
     } else {
-        // Verificar stream OBS (simulado)
+        // Verificar stream OBS via API do sistema
         $userLogin = $user['user_login'];
-        $obsStreamUrl = "http://stmv1.udicast.com:1935/{$userLogin}/{$userLogin}_live/playlist.m3u8";
         
-        // Verificar se stream está ativo
-        $headers = @get_headers($obsStreamUrl, 1);
-        if ($headers && strpos($headers[0], '200') !== false) {
+        // Chamar API do sistema para verificar OBS
+        $apiUrl = "http://samhost.wcore.com.br:3001/api/streaming/obs-status";
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => "Authorization: Bearer " . getAuthToken($user['codigo_cliente']) . "\r\n",
+                'timeout' => 10
+            ]
+        ]);
+        
+        $apiResponse = @file_get_contents($apiUrl, false, $context);
+        if ($apiResponse) {
+            $obsData = json_decode($apiResponse, true);
+            if ($obsData && $obsData['success'] && $obsData['obs_stream']['is_live']) {
+                $obsStreamUrl = "http://stmv1.udicast.com:1935/{$userLogin}/{$userLogin}_live/playlist.m3u8";
+                
+                $response['has_active_transmission'] = true;
+                $response['transmission_type'] = 'obs';
+                $response['stream_url'] = $obsStreamUrl;
+                $response['title'] = "Transmissão OBS - {$userLogin}";
+                $response['obs_info'] = [
+                    'viewers' => $obsData['obs_stream']['viewers'] ?? 0,
+                    'bitrate' => $obsData['obs_stream']['bitrate'] ?? 0,
+                    'uptime' => $obsData['obs_stream']['uptime'] ?? '00:00:00'
+                ];
+            }
+        }
+    }
+    
+    echo json_encode($response);
+    
+} catch (Exception $e) {
+    http_response_code(500);
+    echo json_encode(['error' => 'Internal server error']);
+}
+
+// Função auxiliar para obter token de autenticação (simplificada)
+function getAuthToken($userId) {
+    // Em produção, você implementaria a lógica de JWT aqui
+    // Por enquanto, retornar um token mock ou implementar autenticação básica
+    return 'mock_token_' . $userId;
+}
+?>
             $response['has_active_transmission'] = true;
             $response['transmission_type'] = 'obs';
             $response['stream_url'] = $obsStreamUrl;

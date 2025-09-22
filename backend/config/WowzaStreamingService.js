@@ -379,7 +379,8 @@ class WowzaStreamingService {
         userRows[0].usuario : 
         (userRows[0]?.email ? userRows[0].email.split('@')[0] : `user_${userId}`);
 
-      const response = await fetch(`${this.baseUrl}/v2/servers/_defaultServer_/applications/${this.application}/instances/_definst_/incomingstreams/${userLogin}_live`, {
+      // Verificar se há incoming streams ativos para o usuário
+      const response = await fetch(`${this.baseUrl}/v2/servers/_defaultServer_/vhosts/_defaultVHost_/applications/${this.application}/instances/_definst_/incomingstreams`, {
         method: 'GET',
         headers: {
           'Authorization': `Basic ${Buffer.from(`${this.username}:${this.password}`).toString('base64')}`,
@@ -391,19 +392,48 @@ class WowzaStreamingService {
       if (response.ok) {
         const data = await response.json();
         
-        return {
-          isLive: true,
-          isActive: true,
-          viewers: data.connectionsCurrent || 0,
-          bitrate: Math.floor((data.messagesInBytesRate || 0) / 1000),
-          uptime: this.formatUptime(data.timeRunning || 0),
-          recording: false,
-          platforms: []
-        };
+        // Procurar stream do usuário na lista de incoming streams
+        const userStream = data.incomingStreams?.find(stream => 
+          stream.name === `${userLogin}_live` || 
+          stream.name === userLogin ||
+          stream.name.includes(userLogin)
+        );
+
+        if (userStream) {
+          return {
+            isLive: true,
+            isActive: true,
+            streamName: userStream.name,
+            viewers: userStream.connectionsCurrent || 0,
+            bitrate: Math.floor((userStream.messagesInBytesRate || 0) / 1000),
+            uptime: this.formatUptime(userStream.timeRunning || 0),
+            recording: false,
+            platforms: [],
+            streamInfo: {
+              sourceIp: userStream.sourceIp || 'N/A',
+              protocol: userStream.protocol || 'RTMP',
+              isRecording: userStream.isRecording || false,
+              audioCodec: userStream.audioCodec || 'N/A',
+              videoCodec: userStream.videoCodec || 'N/A'
+            }
+          };
+        } else {
+          return {
+            isLive: false,
+            isActive: false,
+            streamName: `${userLogin}_live`,
+            viewers: 0,
+            bitrate: 0,
+            uptime: '00:00:00',
+            recording: false,
+            platforms: []
+          };
+        }
       } else {
         return {
           isLive: false,
           isActive: false,
+          streamName: `${userLogin}_live`,
           viewers: 0,
           bitrate: 0,
           uptime: '00:00:00',
@@ -416,11 +446,163 @@ class WowzaStreamingService {
       return {
         isLive: false,
         isActive: false,
+        streamName: `${userLogin}_live`,
         viewers: 0,
         bitrate: 0,
         uptime: '00:00:00',
         recording: false,
         platforms: []
+      };
+    }
+  }
+
+  // Verificar se há algum incoming stream ativo para o usuário
+  async checkUserIncomingStreams(userId) {
+    try {
+      if (!this.initialized) {
+        await this.initializeFromDatabase(userId);
+      }
+
+      // Buscar userLogin
+      const [userRows] = await db.execute(
+        'SELECT usuario, email FROM streamings WHERE codigo_cliente = ? LIMIT 1',
+        [userId]
+      );
+
+      const userLogin = userRows.length > 0 && userRows[0].usuario ? 
+        userRows[0].usuario : 
+        (userRows[0]?.email ? userRows[0].email.split('@')[0] : `user_${userId}`);
+
+      console.log(`🔍 Verificando incoming streams para usuário: ${userLogin}`);
+
+      const response = await fetch(`${this.baseUrl}/v2/servers/_defaultServer_/vhosts/_defaultVHost_/applications/${this.application}/instances/_definst_/incomingstreams`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${Buffer.from(`${this.username}:${this.password}`).toString('base64')}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`📊 Total de incoming streams: ${data.incomingStreams?.length || 0}`);
+        
+        // Procurar streams do usuário
+        const userStreams = data.incomingStreams?.filter(stream => 
+          stream.name === `${userLogin}_live` || 
+          stream.name === userLogin ||
+          stream.name.includes(userLogin)
+        ) || [];
+
+        console.log(`🎯 Streams encontrados para ${userLogin}:`, userStreams.map(s => s.name));
+
+        return {
+          success: true,
+          hasActiveStreams: userStreams.length > 0,
+          activeStreams: userStreams,
+          totalStreams: data.incomingStreams?.length || 0,
+          userLogin: userLogin,
+          wowzaUrl: this.baseUrl
+        };
+      } else {
+        console.warn(`⚠️ Erro ao acessar API Wowza: ${response.status}`);
+        return {
+          success: false,
+          hasActiveStreams: false,
+          activeStreams: [],
+          totalStreams: 0,
+          userLogin: userLogin,
+          error: `HTTP ${response.status}`,
+          wowzaUrl: this.baseUrl
+        };
+      }
+    } catch (error) {
+      console.error('❌ Erro ao verificar incoming streams:', error);
+      return {
+        success: false,
+        hasActiveStreams: false,
+        activeStreams: [],
+        totalStreams: 0,
+        userLogin: `user_${userId}`,
+        error: error.message,
+        wowzaUrl: this.baseUrl
+      };
+    }
+  }
+
+  // Listar todos os incoming streams (para debug/admin)
+  async listAllIncomingStreams() {
+    try {
+      const response = await fetch(`${this.baseUrl}/v2/servers/_defaultServer_/vhosts/_defaultVHost_/applications/${this.application}/instances/_definst_/incomingstreams`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${Buffer.from(`${this.username}:${this.password}`).toString('base64')}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          success: true,
+          streams: data.incomingStreams || [],
+          total: data.incomingStreams?.length || 0
+        };
+      } else {
+        return {
+          success: false,
+          streams: [],
+          total: 0,
+          error: `HTTP ${response.status}`
+        };
+      }
+    } catch (error) {
+      console.error('Erro ao listar incoming streams:', error);
+      return {
+        success: false,
+        streams: [],
+        total: 0,
+        error: error.message
+      };
+    }
+  }
+
+  // Obter detalhes de um stream específico
+  async getStreamDetails(streamName) {
+    try {
+      const response = await fetch(`${this.baseUrl}/v2/servers/_defaultServer_/vhosts/_defaultVHost_/applications/${this.application}/instances/_definst_/incomingstreams/${streamName}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Basic ${Buffer.from(`${this.username}:${this.password}`).toString('base64')}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          success: true,
+          stream: data,
+          isActive: true
+        };
+      } else {
+        return {
+          success: false,
+          stream: null,
+          isActive: false,
+          error: `HTTP ${response.status}`
+        };
+      }
+    } catch (error) {
+      console.error(`Erro ao obter detalhes do stream ${streamName}:`, error);
+      return {
+        success: false,
+        stream: null,
+        isActive: false,
+        error: error.message
       };
     }
   }

@@ -213,7 +213,7 @@ const Dashboard: React.FC = () => {
               ? 'http://samhost.wcore.com.br:3001'
               : 'http://localhost:3001';
             setCurrentVideoUrl(`${baseUrl}/api/player-port/iframe?login=${userLogin}&stream=${userLogin}_live&player=1&contador=true`);
-            setPlaylistName('Transmissão OBS');
+            setPlaylistName(`📡 OBS: ${data.obs_stream.streamName || `${userLogin}_live`}`);
           } else if (data.transmission) {
             // Para playlist, usar URL do player na porta do sistema
             const baseUrl = process.env.NODE_ENV === 'production' 
@@ -227,10 +227,16 @@ const Dashboard: React.FC = () => {
               data.transmission.titulo);
           }
           setShowPlayer(true);
+          setPlayerError(null);
         } else {
           setShowPlayer(false);
           setPlaylistName('');
           setPlayerError(null);
+        }
+        
+        // Log de debug para verificar conexão Wowza
+        if (data.wowza_info?.connection_error) {
+          console.warn('⚠️ Problema na conexão Wowza:', data.wowza_info.connection_error);
         }
       }
     } catch (error) {

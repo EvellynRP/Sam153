@@ -570,6 +570,46 @@ router.get('/status', authMiddleware, async (req, res) => {
     res.status(500).json({ success: false, error: 'Erro interno do servidor' });
   }
 });
+// GET /api/streaming/wowza-debug - Debug da API Wowza (admin)
+router.get('/wowza-debug', authMiddleware, async (req, res) => {
+  try {
+    // Verificar se usuário tem permissão (apenas revendas)
+    if (req.user.tipo !== 'revenda') {
+      return res.status(403).json({
+        success: false,
+        error: 'Acesso negado. Apenas revendas podem acessar informações de debug.'
+      });
+    }
+
+    const WowzaStreamingService = require('../config/WowzaStreamingService');
+    
+    // Testar conexão
+    const connectionTest = await WowzaStreamingService.testConnection();
+    
+    // Listar todos os incoming streams
+    const allStreams = await WowzaStreamingService.listAllIncomingStreams();
+    
+    res.json({
+      success: true,
+      connection_test: connectionTest,
+      all_streams: allStreams,
+      wowza_config: {
+        baseUrl: WowzaStreamingService.baseUrl,
+        username: WowzaStreamingService.username,
+        application: WowzaStreamingService.application,
+        initialized: WowzaStreamingService.initialized
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Erro no debug Wowza:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Erro interno do servidor',
+      details: error.message
+    });
+  }
+});
 
 // POST /api/streaming/start - Iniciar transmissão de playlist
 router.post('/start', authMiddleware, async (req, res) => {

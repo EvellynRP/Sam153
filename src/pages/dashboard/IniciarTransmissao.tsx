@@ -84,13 +84,85 @@ const IniciarTransmissao: React.FC = () => {
       }));
     }
   }, [sourceUrls]);
+  // Verificar streams OBS ativos via API Wowza
+  const checkLiveStreams = async () => {
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/streaming/obs-status', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.success && data.obs_stream?.is_live) {
+          console.log('✅ Stream OBS ativo detectado:', data.obs_stream);
+          
+          // Se há stream OBS ativo, configurar player
+          const baseUrl = process.env.NODE_ENV === 'production' 
+            ? 'http://samhost.wcore.com.br:3001'
+            : 'http://localhost:3001';
+          
+          setCurrentPlayerUrl(`${baseUrl}/api/player-port/iframe?login=${userLogin}&stream=${userLogin}_live&player=1&contador=true`);
+          setShowPlayer(true);
+          
+          // Atualizar lista de lives para mostrar status correto
+          setLives(prev => {
+            const hasActiveLive = prev.some(live => live.status === '1');
+            if (!hasActiveLive) {
+              // Adicionar live virtual para mostrar stream OBS
+              const virtualLive = {
+                id: 0,
+                data_inicio: new Date().toISOString(),
+                data_fim: '',
+                tipo: 'obs',
+                servidor_stm: `http://stmv1.udicast.com:1935/${userLogin}/${userLogin}_live/playlist.m3u8`,
+                servidor_live: 'OBS Studio',
+                status: '1',
+                data_inicio_formatted: new Date().toLocaleString(),
+                data_fim_formatted: '',
+                duracao: data.obs_stream.uptime || '00:00:00',
+                status_text: 'Transmitindo (OBS)',
+                platform_name: `OBS (${data.obs_stream.viewers || 0} espectadores)`
+              };
+              return [virtualLive, ...prev];
+            }
+            return prev;
+          });
+        } else {
+          console.log('ℹ️ Nenhum stream OBS ativo');
+          
+          // Remover live virtual do OBS se não há stream ativo
+          setLives(prev => prev.filter(live => live.id !== 0));
+          
+          // Se não há transmissão de playlist também, ocultar player
+          if (!transmissionStatus?.is_live || transmissionStatus.stream_type !== 'playlist') {
+            setShowPlayer(false);
+            setCurrentPlayerUrl('');
+          }
+        }
+        
+        // Log de informações do Wowza para debug
+        if (data.wowza_info) {
+          console.log('📊 Info Wowza:', {
+            total_streams: data.wowza_info.total_streams,
+            user_streams: data.wowza_info.user_streams,
+            connection_error: data.wowza_info.connection_error
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao verificar streams OBS:', error);
+    }
+  };
 
   const loadInitialData = async () => {
     try {
       await Promise.all([
         loadPlatforms(),
         loadSourceUrls(),
-        loadLives()
+        loadLives(),
+        checkLiveStreams() // Verificar streams OBS também
       ]);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);

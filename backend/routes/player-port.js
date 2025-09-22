@@ -145,14 +145,40 @@ router.get('/iframe', async (req, res) => {
                 } else {
                     console.log(`⚠️ Nenhuma transmissão de playlist para usuário ${login}, verificando OBS...`);
 
-                    // 2. Verificar transmissão OBS
+                    // 2. Verificar transmissão OBS via API Wowza
                     try {
-                        const wowzaHost = 'stmv1.udicast.com';
-                        videoUrl = `http://${wowzaHost}:1935/${login}/${login}_live/playlist.m3u8`;
-                        title = `Stream OBS: ${login}`;
-                        isLive = true;
+                        // Buscar userId baseado no login
+                        const [userIdRows] = await db.execute(
+                            'SELECT codigo_cliente FROM streamings WHERE usuario = ? OR email LIKE ? LIMIT 1',
+                            [login, `${login}@%`]
+                        );
+                        
+                        if (userIdRows.length > 0) {
+                            const userIdForWowza = userIdRows[0].codigo_cliente;
+                            const WowzaStreamingService = require('../config/WowzaStreamingService');
+                            const incomingStreamsResult = await WowzaStreamingService.checkUserIncomingStreams(userIdForWowza);
+                            
+                            if (incomingStreamsResult.hasActiveStreams) {
+                                console.log(`✅ Stream OBS ativo encontrado para ${login}:`, incomingStreamsResult.activeStreams[0].name);
+                                const wowzaHost = 'stmv1.udicast.com';
+                                videoUrl = `http://${wowzaHost}:1935/${login}/${login}_live/playlist.m3u8`;
+                                title = `Stream OBS - ${login}`;
+                                isLive = true;
+                            } else {
+                                console.log(`⚠️ Nenhum incoming stream ativo para usuário ${login}`);
+                                // Sem transmissão ativa - mostrar "sem sinal"
+                                videoUrl = '';
+                                title = `Sem Transmissão - ${login}`;
+                                isLive = false;
+                            }
+                        } else {
+                            console.log(`⚠️ Usuário ${login} não encontrado no banco`);
+                            videoUrl = '';
+                            title = `Usuário não encontrado - ${login}`;
+                            isLive = false;
+                        }
                     } catch (obsError) {
-                        console.log(`⚠️ Nenhuma transmissão ativa para usuário ${login}`);
+                        console.error(`❌ Erro ao verificar OBS para ${login}:`, obsError);
                         // Sem transmissão ativa - mostrar "sem sinal"
                         videoUrl = '';
                         title = `Sem Transmissão - ${login}`;
